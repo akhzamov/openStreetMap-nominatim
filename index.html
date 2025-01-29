@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenStreetMap с Nominatim</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+      #map {
+        height: 500px;
+        width: 100%;
+      }
+      .search-container {
+        position: relative;
+        margin-bottom: 10px;
+      }
+      #search {
+        width: 300px;
+        padding: 5px;
+      }
+      #results {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #ccc;
+        display: none;
+        z-index: 1000;
+      }
+      .result-item {
+        padding: 5px;
+        cursor: pointer;
+      }
+      .result-item:hover {
+        background: #f0f0f0;
+      }
+      .leaflet-bottom.leaflet-right {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="search-container">
+      <input type="text" id="search" placeholder="Введите адрес..." />
+      <div id="results"></div>
+    </div>
+    <button onclick="searchAddress()">Поиск</button>
+    <div class="home" id="home-section">
+      <div id="map"></div>
+    </div>
+    <input type="text" id="lat-input" placeholder="lat" />
+    <input type="text" id="lon-input" placeholder="lon" />
+    <input type="text" id="country-input" placeholder="country" />
+    <input type="text" id="state-input" placeholder="state/city" />
+    <input type="text" id="region-input" placeholder="region" />
+    <input type="text" id="county-input" placeholder="county" />
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+      const observer = new MutationObserver((mutations, obs) => {
+        const mapContainer = document.getElementById("home-section");
+        if (mapContainer) {
+          initMap(); // Вызываем функцию инициализации карты
+          obs.disconnect(); // Отключаем наблюдатель после срабатывания
+        }
+      });
+
+      // Следим за изменениями в body
+      observer.observe(document.body, { childList: true, subtree: true });
+
+      // Функция инициализации карты
+      function initMap() {
+        const map = L.map("map").setView([41.3111534, 69.2797515], 15);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "© OpenStreetMap",
+        }).addTo(map);
+
+        let marker = L.marker([41.3111534, 69.2797515], {
+          draggable: true,
+        }).addTo(map);
+
+        console.log("Карта загружена!");
+      }
+
+      // Debounce функция
+      function debounce(func, timeout = 300) {
+        let timer;
+        return (...args) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            func.apply(this, args);
+          }, timeout);
+        };
+      }
+
+      // Элементы интерфейса
+      const searchInput = document.getElementById("search");
+      const resultsContainer = document.getElementById("results");
+      const latInput = document.getElementById("lat-input");
+      const lonInput = document.getElementById("lon-input");
+      const countryInput = document.getElementById("country-input");
+      const stateInput = document.getElementById("state-input");
+      const regionInput = document.getElementById("region-input");
+      const countyInput = document.getElementById("county-input");
+
+      // Обработчик ввода с debounce
+      searchInput.addEventListener(
+        "input",
+        debounce(function (e) {
+          if (e.target.value.length > 2) {
+            searchAddress(e.target.value);
+          }
+        })
+      );
+
+      // Обновленная функция поиска
+      function searchAddress(query = null) {
+        const address = query || document.getElementById("search").value;
+        if (address) {
+          fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+              address
+            )}&addressdetails=1`
+          )
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.length > 0) {
+                showResults(data);
+              } else {
+                resultsContainer.innerHTML = "";
+                resultsContainer.style.display = "none";
+              }
+            })
+            .catch((error) =>
+              console.error("Ошибка при поиске адреса:", error)
+            );
+        }
+      }
+
+      // Показ результатов поиска
+      function showResults(results) {
+        resultsContainer.innerHTML = results
+          .map((result) => {
+            let fullAddress = [
+              result.address.country, // Страна
+              result.address.state || result.address.city || "s", // Область/регион/город (если есть)
+              result.address.region, // Федеральный округ (если есть)
+              result.address.county, // Район (если есть)
+              result.address.municipality, // Муниципалитет (если есть)
+              result.address.hamlet, // Поселение (если есть)
+              result.address.road || "", // Улица (если есть)
+              result.address.house_number || "", // Номер дома (если есть)
+            ]
+              .filter(Boolean) // Убираем пустые значения
+              .join(", "); // Соединяем в одну строку через запятую
+            return `<div class="result-item" data-lat="${
+              result.lat
+            }" data-lon="${result.lon}" data-country="${
+              result.address.country || ""
+            }" data-state="${
+              result.address.state || result.address.city || ""
+            }" data-region="${result.address.region || ""}" data-county="${
+              result.address.county || ""
+            }">${fullAddress}</div>`;
+          })
+          .join("");
+
+        resultsContainer.style.display = "block";
+        console.log("результат поиска", results);
+
+        // Обработчик клика по результату
+        document.querySelectorAll(".result-item").forEach((item) => {
+          item.addEventListener("click", () => {
+            const lat = parseFloat(item.dataset.lat);
+            const lon = parseFloat(item.dataset.lon);
+            searchInput.value = item.textContent;
+            latInput.value = item.getAttribute("data-lat");
+            lonInput.value = item.getAttribute("data-lon");
+            countryInput.value = item.getAttribute("data-country");
+            stateInput.value = item.getAttribute("data-state");
+            regionInput.value = item.getAttribute("data-region");
+            countyInput.value = item.getAttribute("data-county");
+            resultsContainer.style.display = "none";
+            map.setView([lat, lon], 17);
+            marker.setLatLng([lat, lon]);
+          });
+        });
+      }
+
+      // Обработчики карты и маркера
+      map.on("click", function (e) {
+        marker.setLatLng(e.latlng);
+        reverseGeocode(e.latlng);
+      });
+
+      marker.on("dragend", function (e) {
+        reverseGeocode(marker.getLatLng());
+      });
+
+      // Функция обратного геокодирования
+      function reverseGeocode(latlng) {
+        fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latlng.lat}&lon=${latlng.lng}`
+        )
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.display_name) {
+              let fullAddress = [
+                data.address.country || "", // Страна
+                data.address.state || data.address.city || "", // Область / Регион / Город (если есть)
+                data.address.region || "", // Федеральный округ (если есть)
+                data.address.county || "", // Район (если есть)
+                data.address.municipality || "", // Муниципалитет (если есть)
+                data.address.hamlet || "", // Поселение (если есть)
+                data.address.road || "", // Улица (если есть)
+                data.address.house_number || "", // Номер дома (если есть)
+              ]
+                .filter(Boolean) // Убираем пустые значения
+                .join(", ");
+              searchInput.value = fullAddress;
+              console.log("Координаты:", latlng.lat, latlng.lng);
+              console.log("Адрес:", fullAddress);
+              console.log("Данные из бека:", data);
+              latInput.value = data.lat;
+              lonInput.value = data.lon;
+              countryInput.value = data.address.country ?? "";
+              stateInput.value = data.address.state || data.address.city || "";
+              regionInput.value = data.address.region ?? "";
+              countyInput.value = data.address.county ?? "";
+            }
+          })
+          .catch((error) =>
+            console.error("Ошибка при обратном геокодировании:", error)
+          );
+      }
+
+      // Скрываем результаты при клике вне поля поиска
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest(".search-container")) {
+          resultsContainer.style.display = "none";
+        }
+      });
+    </script>
+  </body>
+</html>
