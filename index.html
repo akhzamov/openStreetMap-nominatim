@@ -45,7 +45,6 @@
       <input type="text" id="search" placeholder="Введите адрес..." />
       <div id="results"></div>
     </div>
-    <button onclick="searchAddress()">Поиск</button>
     <div class="home" id="home-section">
       <div id="map"></div>
     </div>
@@ -58,32 +57,8 @@
 
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
-      const observer = new MutationObserver((mutations, obs) => {
-        const mapContainer = document.getElementById("home-section");
-        if (mapContainer) {
-          initMap(); // Вызываем функцию инициализации карты
-          obs.disconnect(); // Отключаем наблюдатель после срабатывания
-        }
-      });
+      let map, marker;
 
-      // Следим за изменениями в body
-      observer.observe(document.body, { childList: true, subtree: true });
-
-      // Функция инициализации карты
-      function initMap() {
-        const map = L.map("map").setView([41.3111534, 69.2797515], 15);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "© OpenStreetMap",
-        }).addTo(map);
-
-        let marker = L.marker([41.3111534, 69.2797515], {
-          draggable: true,
-        }).addTo(map);
-
-        console.log("Карта загружена!");
-      }
-
-      // Debounce функция
       function debounce(func, timeout = 300) {
         let timer;
         return (...args) => {
@@ -94,52 +69,46 @@
         };
       }
 
-      // Элементы интерфейса
-      const searchInput = document.getElementById("search");
-      const resultsContainer = document.getElementById("results");
-      const latInput = document.getElementById("lat-input");
-      const lonInput = document.getElementById("lon-input");
-      const countryInput = document.getElementById("country-input");
-      const stateInput = document.getElementById("state-input");
-      const regionInput = document.getElementById("region-input");
-      const countyInput = document.getElementById("county-input");
+      function initMap() {
+        if (map) return;
 
-      // Обработчик ввода с debounce
-      searchInput.addEventListener(
-        "input",
-        debounce(function (e) {
-          if (e.target.value.length > 2) {
-            searchAddress(e.target.value);
-          }
-        })
-      );
+        map = L.map("map").setView([41.3111534, 69.2797515], 15);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "© OpenStreetMap",
+        }).addTo(map);
 
-      // Обновленная функция поиска
-      function searchAddress(query = null) {
-        const address = query || document.getElementById("search").value;
-        if (address) {
-          fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-              address
-            )}&addressdetails=1`
-          )
-            .then((response) => response.json())
-            .then((data) => {
-              if (data.length > 0) {
-                showResults(data);
-              } else {
-                resultsContainer.innerHTML = "";
-                resultsContainer.style.display = "none";
-              }
-            })
-            .catch((error) =>
-              console.error("Ошибка при поиске адреса:", error)
-            );
-        }
+        marker = L.marker([41.3111534, 69.2797515], { draggable: true }).addTo(
+          map
+        );
+        marker.on("dragend", () => reverseGeocode(marker.getLatLng()));
+
+        map.on("click", (e) => {
+          marker.setLatLng(e.latlng);
+          reverseGeocode(e.latlng);
+        });
       }
 
-      // Показ результатов поиска
+      const searchAddress = debounce((query) => {
+        if (!query || query.length < 2) {
+          clearResults();
+          return;
+        }
+
+        fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+            query
+          )}&addressdetails=1`
+        )
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.length > 0) showResults(data);
+            else clearResults();
+          })
+          .catch((error) => console.error("Ошибка при поиске адреса:", error));
+      }, 300);
+
       function showResults(results) {
+        const resultsContainer = document.getElementById("results");
         resultsContainer.innerHTML = results
           .map((result) => {
             let fullAddress = [
@@ -154,51 +123,53 @@
             ]
               .filter(Boolean) // Убираем пустые значения
               .join(", "); // Соединяем в одну строку через запятую
-            return `<div class="result-item" data-lat="${
-              result.lat
-            }" data-lon="${result.lon}" data-country="${
-              result.address.country || ""
-            }" data-state="${
-              result.address.state || result.address.city || ""
-            }" data-region="${result.address.region || ""}" data-county="${
-              result.address.county || ""
-            }">${fullAddress}</div>`;
+            return `
+                <div class="result-item"
+                    data-lat="${result.lat}" data-lon="${result.lon}"
+                    data-country="${result.address.country || ""}"
+                    data-state="${
+                      result.address.state || result.address.city || ""
+                    }"
+                    data-region="${result.address.region || ""}"
+                    data-county="${
+                      result.address.county || ""
+                    }">${fullAddress}</div>
+            `;
           })
           .join("");
 
         resultsContainer.style.display = "block";
-        console.log("результат поиска", results);
 
-        // Обработчик клика по результату
         document.querySelectorAll(".result-item").forEach((item) => {
           item.addEventListener("click", () => {
-            const lat = parseFloat(item.dataset.lat);
-            const lon = parseFloat(item.dataset.lon);
-            searchInput.value = item.textContent;
-            latInput.value = item.getAttribute("data-lat");
-            lonInput.value = item.getAttribute("data-lon");
-            countryInput.value = item.getAttribute("data-country");
-            stateInput.value = item.getAttribute("data-state");
-            regionInput.value = item.getAttribute("data-region");
-            countyInput.value = item.getAttribute("data-county");
-            resultsContainer.style.display = "none";
-            map.setView([lat, lon], 17);
-            marker.setLatLng([lat, lon]);
+            selectResult(item);
           });
         });
       }
 
-      // Обработчики карты и маркера
-      map.on("click", function (e) {
-        marker.setLatLng(e.latlng);
-        reverseGeocode(e.latlng);
-      });
+      function clearResults() {
+        const resultsContainer = document.getElementById("results");
+        resultsContainer.innerHTML = "";
+        resultsContainer.style.display = "none";
+      }
 
-      marker.on("dragend", function (e) {
-        reverseGeocode(marker.getLatLng());
-      });
+      function selectResult(item) {
+        const lat = parseFloat(item.dataset.lat);
+        const lon = parseFloat(item.dataset.lon);
 
-      // Функция обратного геокодирования
+        document.getElementById("search").value = item.textContent;
+        document.getElementById("lat-input").value = lat;
+        document.getElementById("lon-input").value = lon;
+        document.getElementById("country-input").value = item.dataset.country;
+        document.getElementById("state-input").value = item.dataset.state;
+        document.getElementById("region-input").value = item.dataset.region;
+        document.getElementById("county-input").value = item.dataset.county;
+
+        clearResults();
+        map.setView([lat, lon], 17);
+        marker.setLatLng([lat, lon]);
+      }
+
       function reverseGeocode(latlng) {
         fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latlng.lat}&lon=${latlng.lng}`
@@ -207,27 +178,28 @@
           .then((data) => {
             if (data.display_name) {
               let fullAddress = [
-                data.address.country || "", // Страна
-                data.address.state || data.address.city || "", // Область / Регион / Город (если есть)
-                data.address.region || "", // Федеральный округ (если есть)
-                data.address.county || "", // Район (если есть)
-                data.address.municipality || "", // Муниципалитет (если есть)
-                data.address.hamlet || "", // Поселение (если есть)
+                data.address.country, // Страна
+                data.address.state || data.address.city || "", // Область/регион/город (если есть)
+                data.address.region, // Федеральный округ (если есть)
+                data.address.county, // Район (если есть)
+                data.address.municipality, // Муниципалитет (если есть)
+                data.address.hamlet, // Поселение (если есть)
                 data.address.road || "", // Улица (если есть)
                 data.address.house_number || "", // Номер дома (если есть)
               ]
                 .filter(Boolean) // Убираем пустые значения
-                .join(", ");
-              searchInput.value = fullAddress;
-              console.log("Координаты:", latlng.lat, latlng.lng);
-              console.log("Адрес:", fullAddress);
-              console.log("Данные из бека:", data);
-              latInput.value = data.lat;
-              lonInput.value = data.lon;
-              countryInput.value = data.address.country ?? "";
-              stateInput.value = data.address.state || data.address.city || "";
-              regionInput.value = data.address.region ?? "";
-              countyInput.value = data.address.county ?? "";
+                .join(", "); // Соединяем в одну строку через запятую
+              document.getElementById("search").value = fullAddress;
+              document.getElementById("lat-input").value = latlng.lat;
+              document.getElementById("lon-input").value = latlng.lng;
+              document.getElementById("country-input").value =
+                data.address.country || "";
+              document.getElementById("state-input").value =
+                data.address.state || data.address.city || "";
+              document.getElementById("region-input").value =
+                data.address.region || "";
+              document.getElementById("county-input").value =
+                data.address.county || "";
             }
           })
           .catch((error) =>
@@ -235,12 +207,23 @@
           );
       }
 
-      // Скрываем результаты при клике вне поля поиска
-      document.addEventListener("click", (e) => {
-        if (!e.target.closest(".search-container")) {
-          resultsContainer.style.display = "none";
-        }
+      document.addEventListener("DOMContentLoaded", () => {
+        document.getElementById("search").addEventListener("input", (e) => {
+          searchAddress(e.target.value);
+        });
+
+        document.addEventListener("click", (e) => {
+          if (!e.target.closest(".search-container")) {
+            clearResults();
+          }
+        });
       });
+
+      const observer = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) initMap();
+      });
+
+      observer.observe(document.getElementById("home-section"));
     </script>
   </body>
 </html>
